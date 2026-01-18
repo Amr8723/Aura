@@ -1,38 +1,65 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
-*/
-
-
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, useSpring, useMotionValue } from 'framer-motion';
 
 const CustomCursor: React.FC = () => {
+  // Respect user's reduced-motion preference
+  if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    return null;
+  }
+
   const [isHovering, setIsHovering] = useState(false);
-  
-  // Initialize off-screen to prevent flash
+
+  // Motion values (no React renders when these update)
   const mouseX = useMotionValue(-100);
   const mouseY = useMotionValue(-100);
-  
-  // Smooth spring animation
-  const springConfig = { damping: 20, stiffness: 350, mass: 0.1 }; 
+
+  // Spring config tuned down for lower CPU (less stiffness)
+  const springConfig = { damping: 30, stiffness: 200, mass: 0.15 } as const;
   const x = useSpring(mouseX, springConfig);
   const y = useSpring(mouseY, springConfig);
 
-  useEffect(() => {
-    const updateMousePosition = (e: MouseEvent) => {
-      mouseX.set(e.clientX);
-      mouseY.set(e.clientY);
+  // Last known mouse pos, updated from event and consumed in rAF loop
+  const lastMouse = useRef({ x: -100, y: -100 });
+  const rafRef = useRef<number | null>(null);
 
-      const target = e.target as HTMLElement;
-      const clickable = target.closest('button') || 
-                        target.closest('a') || 
-                        target.closest('[data-hover="true"]');
-      setIsHovering(!!clickable);
+  useEffect(() => {
+    // Update lastMouse on pointermove (cheap)
+    const onPointerMove = (e: PointerEvent) => {
+      lastMouse.current.x = e.clientX;
+      lastMouse.current.y = e.clientY;
     };
 
-    window.addEventListener('mousemove', updateMousePosition, { passive: true });
-    return () => window.removeEventListener('mousemove', updateMousePosition);
+    // Use pointerover/pointerout to detect hover state on interactive elements
+    const onPointerOver = (e: PointerEvent) => {
+      const el = e.target as HTMLElement | null;
+      setIsHovering(!!(el && (el.closest('button') || el.closest('a') || el.closest('[data-hover="true"]'))));
+    };
+
+    const onPointerOut = (e: PointerEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (!el || (!el.closest('button') && !el.closest('a') && !el.closest('[data-hover="true"]'))) {
+        setIsHovering(false);
+      }
+    };
+
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerover', onPointerOver, { passive: true });
+    window.addEventListener('pointerout', onPointerOut, { passive: true });
+
+    // rAF loop to write motion values at screen refresh rate (no DOM traversal here)
+    const loop = () => {
+      mouseX.set(lastMouse.current.x);
+      mouseY.set(lastMouse.current.y);
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerover', onPointerOver);
+      window.removeEventListener('pointerout', onPointerOut);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, [mouseX, mouseY]);
 
   return (
@@ -40,25 +67,17 @@ const CustomCursor: React.FC = () => {
       className="fixed top-0 left-0 z-[9999] pointer-events-none mix-blend-difference flex items-center justify-center hidden md:flex will-change-transform"
       style={{ x, y, translateX: '-50%', translateY: '-50%' }}
     >
-      {/* This div is the actual cursor "body" and will handle the scaling and text centering */}
-      {/* Changed base size to 80px diameter (40px radius) */}
       <motion.div
-        className="relative rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.3)] flex items-center justify-center"
-        style={{ width: 80, height: 80 }}
-        animate={{
-          // Scaled by 1.5 to become 120px diameter (60px radius) when hovering
-          scale: isHovering ? 1.5 : 1, 
-        }}
-        transition={{ type: "spring", stiffness: 300, damping: 25 }}
+        className="relative rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.2)] flex items-center justify-center"
+        style={{ width: isHovering ? 60 : 48, height: isHovering ? 60 : 48 }}
+        animate={{ scale: isHovering ? 1.12 : 1 }}
+        transition={{ type: 'spring', stiffness: 220, damping: 26 }}
       >
-        {/* Text directly inside the scalable cursor body, centered by flex parent */}
-        <motion.span 
-          className="z-10 text-black font-black uppercase tracking-widest text-sm overflow-hidden whitespace-nowrap"
+        <motion.span
+          className="z-10 text-black font-black uppercase tracking-widest text-xs overflow-hidden whitespace-nowrap"
           initial={{ opacity: 0 }}
-          animate={{ 
-            opacity: isHovering ? 1 : 0,
-          }}
-          transition={{ duration: 0.2 }}
+          animate={{ opacity: isHovering ? 1 : 0 }}
+          transition={{ duration: 0.12 }}
         >
           View
         </motion.span>
